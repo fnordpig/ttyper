@@ -15,6 +15,9 @@ dirs = "^5.0"
 crossterm = "^0.26"
 rust-embed = "^6.4"
 toml = "^0.7"
+async-openai = "^0.10"
+tokio = { version = "1.25.0", features = ["full"] }
+rascii_art = { git = "https://github.com/KoBruhh/RASCII.git" }
 
 [dependencies.ratatui]
 version = "^0.21"

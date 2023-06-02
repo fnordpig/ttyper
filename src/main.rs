@@ -2,6 +2,7 @@ mod config;
 mod test;
 mod ui;
 
+use async_openai::{Client, types::{ChatCompletionRequestMessageArgs, Role, ChatCompletionRequestMessage, CreateChatCompletionRequestArgs}};
 use config::Config;
 use test::{results::Results, Test};
 
@@ -15,13 +16,13 @@ use rust_embed::RustEmbed;
 use std::{
     ffi::OsString,
     fs,
-    io::{self, BufRead},
+    io::{self, BufRead, stdout},
     num,
     path::PathBuf,
     str,
 };
 use structopt::StructOpt;
-use ratatui::{backend::CrosstermBackend, terminal::Terminal};
+use ratatui::{backend::CrosstermBackend, terminal::Terminal, text::{Line, Span}, widgets::{Paragraph, Block, Borders}, layout::Alignment};
 
 #[derive(RustEmbed)]
 #[folder = "resources/runtime"]
@@ -58,7 +59,10 @@ struct Opt {
 }
 
 impl Opt {
-    fn gen_contents(&self) -> Option<Vec<String>> {
+    async fn gen_contents(&self) -> Option<Vec<String>> {
+        let chatgpt = ChatGPT::default();
+        chatgpt.gen_contents().await
+        /*
         match &self.contents {
             Some(path) => {
                 let lines: Vec<String> = if path.as_os_str() == "-" {
@@ -109,10 +113,11 @@ impl Opt {
                     .map(ToOwned::to_owned)
                     .collect();
                 contents.shuffle(&mut rng);
-
+                println!("{:?}", contents);
                 Some(contents)
             }
         }
+        */
     }
 
 
@@ -150,6 +155,67 @@ impl Opt {
     }
 }
 
+const DEFAULT_CHATGPT_MODEL: &str = "gpt-3.5-turbo";
+const DEFAULT_MAX_TOKENS: u16 = 3000u16;
+const DEFAULT_SYSTEM_PROMPTS: [ &str; 14] = [
+    "You are an English language typing tutor that comes up with sentences to type to train students of varying levels of skill.",
+    "Given a prompt describing the students skill level provide a new sentence to type which will give a good exercise of typing skills utilizing the focus prompted.",
+    "Focus on providing sentences that exercise the keyboard layout on a QWERTY keyboard. Do not explain anything and do not respond with anything more than the sentence to type.",
+    "Do not offer sentences with 'fill in the blank' options.",
+    "Do not provide information other than the sentence to type.",
+    "The syntax of the prompt will be 'Level: <skill level> Focus: <letters to focus on> Theme: <theme>'.",
+    "The levels of skill are: beginner, intermediate, advanced, and expert.",
+    "The letters to focus on are keys on the keyboard to use in generating sentences.",
+    "You may use letters that are not in the focus, but most of the letters should be in the focus.",
+    "The theme is the theme of the sentence and the sentence you generate must be on that theme.",
+    "Be sure every sentence is a natural language English sentence that emphasizes the keys requested, but it may contain keys not requested to make the sentence more sensible.",
+    "Make sure to write long sentences, at least 20 words lone but no more than 50 words long.",
+    "An example: 'Level: beginner Focus: abcdefghijklmnopqrstuvwxyz Theme: animals'.",
+    "Write an entire story in the sentences.  Do not provide just one sentence.  Provide as many as you can to complete the story."
+];
+
+#[derive(Debug, Clone, Default)]
+struct ChatGPT {
+    model: String,
+    max_tokens: u16,
+    system_prompts: Vec<ChatCompletionRequestMessage>,
+}
+
+impl ChatGPT {
+    fn default () -> Self {
+        let system_prompts = DEFAULT_SYSTEM_PROMPTS.iter()
+        .map(|x| ChatCompletionRequestMessageArgs::default()
+            .role(Role::System)
+            .content(x.to_string())
+            .build().unwrap())
+        .collect::<Vec<_>>();
+
+        Self {
+            model: DEFAULT_CHATGPT_MODEL.to_string(),
+            max_tokens: DEFAULT_MAX_TOKENS,
+            system_prompts,
+        }
+    }
+
+    async fn gen_contents(&self) -> Option<Vec<String>> {
+        let client = Client::new();
+        let mut messages = self.system_prompts.clone();
+        messages.push(ChatCompletionRequestMessageArgs::default()
+            .role(Role::User)
+            .content("Level: beginner Focus: abcdefghijklmnopqrstuvwxyz Theme: Minecraft".to_string())
+            .build().unwrap());
+        let request = CreateChatCompletionRequestArgs::default()
+            .model(self.model.clone())
+            .max_tokens(self.max_tokens)
+            .messages(messages)
+            .build().unwrap();
+        let response = client.chat().create(request).await.unwrap();
+        let content: Vec<String> = response.choices.iter().map(|x| x.message.content.clone()).collect();
+        let words: Vec<String> = content.join(" ").split_whitespace().map(|x| x.to_string()).collect();
+        Some(words)
+    }    
+}
+
 enum State {
     Test(Test),
     Results(Results),
@@ -177,7 +243,8 @@ impl State {
     }
 }
 
-fn main() -> crossterm::Result<()> {
+#[tokio::main]
+async fn main() -> crossterm::Result<()> {
     let opt = Opt::from_args();
     if opt.debug {
         dbg!(&opt);
@@ -204,13 +271,32 @@ fn main() -> crossterm::Result<()> {
         io::stdout(),
         cursor::Hide,
         cursor::SavePosition,
-        terminal::EnterAlternateScreen,
     )?;
     terminal.clear()?;
+    terminal.draw(|f| {
+        let text = vec![
+            Line::from(Span::raw("Loading...")),
+        ];
+        let paragraph = Paragraph::new(text)
+            .block(Block::default().borders(Borders::ALL))
+            .alignment(Alignment::Center);
+        f.render_widget(paragraph, f.size());
+    })?;
+    terminal.set_cursor(10, 5)?;
+    let mut options = rascii_art::RenderOptions::default()
+        .colored(true)
+        .charset(rascii_art::charsets::BLOCK)
+        .height((terminal.size()?.height as f64 * 0.90) as u32)
+        .width((terminal.size()?.width as f64 * 0.90) as u32);
 
-    let mut state = State::Test(Test::new(opt.gen_contents().expect(
+    terminal::disable_raw_mode()?;
+    rascii_art::render_to("wait.jpg", &mut stdout(), options).unwrap();
+    let words = opt.gen_contents().await.expect(
         "Couldn't get test contents. Make sure the specified language actually exists.",
-    )));
+    );
+    terminal::enable_raw_mode()?;
+    terminal.clear()?;
+    let mut state = State::Test(Test::new(words));
 
     state.render_into(&mut terminal, &config)?;
     loop {
@@ -251,7 +337,7 @@ fn main() -> crossterm::Result<()> {
                     modifiers: KeyModifiers::NONE,
                     ..
                 }) => {
-                    state = State::Test(Test::new(opt.gen_contents().expect(
+                    state = State::Test(Test::new(opt.gen_contents().await.expect(
                             "Couldn't get test contents. Make sure the specified language actually exists.",
                         )));
                 }
@@ -269,11 +355,11 @@ fn main() -> crossterm::Result<()> {
 
     terminal::disable_raw_mode()?;
     execute!(
-        io::stdout(),
+        terminal.backend_mut(),
         cursor::RestorePosition,
         cursor::Show,
         terminal::LeaveAlternateScreen,
     )?;
-
+    terminal.show_cursor();
     Ok(())
 }
