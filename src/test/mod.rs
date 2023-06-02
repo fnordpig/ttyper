@@ -1,8 +1,12 @@
 pub mod results;
 
+use async_openai::Client;
+use async_openai::types::{CreateImageRequestArgs, ResponseFormat, ImageSize};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::fmt;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
+use anyhow::{Result, anyhow};
 
 pub struct TestEvent {
     pub time: Instant,
@@ -41,15 +45,29 @@ pub struct Test {
     pub words: Vec<TestWord>,
     pub current_word: usize,
     pub complete: bool,
+    pub image_path: PathBuf,
 }
 
 impl Test {
-    pub fn new(words: Vec<String>) -> Self {
-        Self {
+    pub async fn new(words: Vec<String>) -> Result<Self> {
+        let client = Client::new();
+        let request = CreateImageRequestArgs::default()
+            .prompt(words.join(" "))
+            .n(1)
+            .response_format(ResponseFormat::Url)
+            .size(ImageSize::S512x512)
+            .user("async-openai")
+            .build()?;
+        let response = client.images().create(request).await?;
+
+        let image_path = response.save("./data").await?.into_iter().next().ok_or(anyhow!("No image returned"))?;
+    
+        Ok(Self {
             words: words.into_iter().map(TestWord::from).collect(),
             current_word: 0,
             complete: false,
-        }
+            image_path,
+        })
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {

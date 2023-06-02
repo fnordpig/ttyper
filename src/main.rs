@@ -18,9 +18,9 @@ use rust_embed::RustEmbed;
 use std::{
     ffi::OsString,
     fs,
-    io::{self, BufRead, stdout, Write},
+    io::{self, BufRead, Write},
     num,
-    path::PathBuf,
+    path::{PathBuf},
     str,
 };
 use structopt::StructOpt;
@@ -154,9 +154,10 @@ impl Opt {
 
 const DEFAULT_CHATGPT_MODEL: &str = "gpt-3.5-turbo";
 const DEFAULT_MAX_TOKENS: u16 = 3000u16;
-const DEFAULT_SYSTEM_PROMPTS: [ &str; 2] = [
+const DEFAULT_SYSTEM_PROMPTS: [ &str; 3] = [
     "Compose a narrative set in the Minecraft world featuring characters named {} from Minecraft Books and YouTube. Your task is to weave an engaging quest filled with courage, strategic maneuvers, and high stakes. However, there is a unique constraint: you're only allowed to use the following characters to construct sentences: 'a', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'o', 's', 'u', 'y', 't'. This means you must completely avoid using 'n', 'r', 'b', 'm', 'w', 'v', 'c', 'p', and any other characters not listed in the allowed set, including words like 'and', 'but', 'they', 'with', 'from', 'can', 'upon', 'moon', 'against', 'fabulous', 'aghast' and any others not allowed. Be especially vigilant about this as the purpose of the story is for a typing tutorial program, so incorporating words with letters that aren't allowed would not be beneficial for the students. The narrative should flow naturally, despite these unique constraints.",
-    "After each sentence the user will prompt you to continue the story.  Add in exciting plot twists.  Do not use any other letters than 'asdfghjkleiou'.  Do not respond directly to the users prompt.",
+    "After each response the user will prompt you to continue the story.  Add in exciting plot twists.  Do not use any other letters than 'asdfghjkleiou'.  Do not respond directly to the users prompt.",
+    "Responses should be no longer than 100 words long."
 ];
 const MINECRAFT_CHARACTERS: [&str; 16] = [
     "Jedu", 
@@ -222,23 +223,7 @@ impl ChatGPT {
                 .alignment(Alignment::Center);
             f.render_widget(paragraph, f.size());
         })?;
-        let options = rascii_art::RenderOptions::default()
-            .colored(true)
-            .charset(rascii_art::charsets::BLOCK)
-            .height((terminal.size()?.height as f64 * 0.90) as u32)
-            .width((terminal.size()?.width as f64 * 0.90) as u32);
-        
-        let mut image = vec![];
-        rascii_art::render_to("wait.jpg", &mut image, options).unwrap();
-        let image_string = String::from_utf8_lossy(&image);
-        let image_lines = image_string.lines();
-        let x = 10;
-        let y = 5;
-        terminal.set_cursor(x, y)?;
-        for (offset, line) in image_lines.enumerate() {
-            terminal.set_cursor(x, y + offset as u16)?;
-            write!(std::io::stdout(), "{}", line)?;
-        }    
+        draw_image(terminal, "./wait.jpg".into(), 10, 5, (terminal.size()?.width as f64 * 0.90) as u16,(terminal.size()?.height as f64 * 0.90) as u16)?;
         Ok(())
     }
 
@@ -269,6 +254,25 @@ impl ChatGPT {
     }    
 }
 
+fn draw_image<B: Backend>(terminal: &mut Terminal<B>, image_path: PathBuf, x: u16, y: u16, w: u16, h: u16) -> Result<()> {
+    let options = rascii_art::RenderOptions::default()
+        .colored(true)
+        .charset(rascii_art::charsets::BLOCK)
+        .height(h as u32)
+        .width(w as u32);
+    
+    let mut image = vec![];
+    rascii_art::render_to(image_path, &mut image, options).unwrap();
+    let image_string = String::from_utf8_lossy(&image);
+    let image_lines = image_string.lines();
+    terminal.set_cursor(x, y)?;
+    for (offset, line) in image_lines.enumerate() {
+        terminal.set_cursor(x, y + offset as u16)?;
+        write!(std::io::stdout(), "{}", line)?;
+    }    
+    Ok(())
+}
+
 enum State {
     Test(Test),
     Results(Results),
@@ -279,14 +283,17 @@ impl State {
         &self,
         terminal: &mut Terminal<B>,
         config: &Config,
-    ) -> crossterm::Result<()> {
+    ) -> Result<()> {
         match self {
             State::Test(test) => {
+                terminal.clear()?;
                 terminal.draw(|f| {
                     f.render_widget(config.theme.apply_to(test), f.size());
                 })?;
+                draw_image(terminal, test.image_path.clone(), 10, 10, (terminal.size()?.width as f64 * 0.75) as u16,(terminal.size()?.height as f64 * 0.75) as u16)?;
             }
             State::Results(results) => {
+                terminal.clear()?;
                 terminal.draw(|f| {
                     f.render_widget(config.theme.apply_to(results), f.size());
                 })?;
@@ -330,8 +337,7 @@ async fn main() -> Result<()> {
         "Couldn't get test contents. Make sure the specified language actually exists.",
     );
 
-    terminal.clear()?;
-    let mut state = State::Test(Test::new(words));
+    let mut state = State::Test(Test::new(words).await?);
 
     state.render_into(&mut terminal, &config)?;
     loop {
@@ -374,7 +380,7 @@ async fn main() -> Result<()> {
                 }) => {
                     state = State::Test(Test::new(chatgpt.gen_contents(&mut terminal).await?.expect(
                             "Couldn't get test contents. Make sure the specified language actually exists.",
-                        )));
+                        )).await?);
                 }
                 Event::Key(KeyEvent {
                     code: KeyCode::Char('q'),

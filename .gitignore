@@ -10,3 +10,6 @@ result
 # Editor
 .vim/
 .nvimrc
+
+# images
+data/
