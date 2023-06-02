@@ -153,11 +153,11 @@ impl Opt {
 }
 
 const DEFAULT_CHATGPT_MODEL: &str = "gpt-3.5-turbo";
-const DEFAULT_MAX_TOKENS: u16 = 3000u16;
+const DEFAULT_MAX_TOKENS: u16 = 75u16;
 const DEFAULT_SYSTEM_PROMPTS: [ &str; 3] = [
     "Compose a narrative set in the Minecraft world featuring characters named {} from Minecraft Books and YouTube. Your task is to weave an engaging quest filled with courage, strategic maneuvers, and high stakes. However, there is a unique constraint: you're only allowed to use the following characters to construct sentences: 'a', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'o', 's', 'u', 'y', 't'. This means you must completely avoid using 'n', 'r', 'b', 'm', 'w', 'v', 'c', 'p', and any other characters not listed in the allowed set, including words like 'and', 'but', 'they', 'with', 'from', 'can', 'upon', 'moon', 'against', 'fabulous', 'aghast' and any others not allowed. Be especially vigilant about this as the purpose of the story is for a typing tutorial program, so incorporating words with letters that aren't allowed would not be beneficial for the students. The narrative should flow naturally, despite these unique constraints.",
     "After each response the user will prompt you to continue the story.  Add in exciting plot twists.  Do not use any other letters than 'asdfghjkleiou'.  Do not respond directly to the users prompt.",
-    "Responses should be no longer than 100 words long."
+    "Responses should be no longer than 50 words long."
 ];
 const MINECRAFT_CHARACTERS: [&str; 16] = [
     "Jedu", 
@@ -249,7 +249,6 @@ impl ChatGPT {
             .role(Role::User)
             .content("Continue story.  Use only the letters 'asdfghjkleiou'.  Do not use the letters 'tpwqrzxcvbnm'. Do not respond to this directly.")
             .build().unwrap());
-        terminal.clear()?;
         Ok(Some(words))
     }    
 }
@@ -286,14 +285,12 @@ impl State {
     ) -> Result<()> {
         match self {
             State::Test(test) => {
-                terminal.clear()?;
                 terminal.draw(|f| {
                     f.render_widget(config.theme.apply_to(test), f.size());
                 })?;
                 draw_image(terminal, test.image_path.clone(), 10, 10, (terminal.size()?.width as f64 * 0.75) as u16,(terminal.size()?.height as f64 * 0.75) as u16)?;
             }
             State::Results(results) => {
-                terminal.clear()?;
                 terminal.draw(|f| {
                     f.render_widget(config.theme.apply_to(results), f.size());
                 })?;
@@ -338,7 +335,8 @@ async fn main() -> Result<()> {
     );
 
     let mut state = State::Test(Test::new(words).await?);
-
+    
+    terminal.clear()?;
     state.render_into(&mut terminal, &config)?;
     loop {
         let event = event::read()?;
@@ -356,6 +354,7 @@ async fn main() -> Result<()> {
                 ..
             }) => match state {
                 State::Test(ref test) => {
+                    terminal.clear()?;
                     state = State::Results(Results::from(test));
                 }
                 State::Results(_) => break,
