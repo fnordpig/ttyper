@@ -12,6 +12,7 @@ use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
     execute, terminal,
 };
+use formatx::formatx;
 use rand::{seq::SliceRandom, thread_rng};
 use rust_embed::RustEmbed;
 use std::{
@@ -153,21 +154,27 @@ impl Opt {
 
 const DEFAULT_CHATGPT_MODEL: &str = "gpt-3.5-turbo";
 const DEFAULT_MAX_TOKENS: u16 = 3000u16;
-const DEFAULT_SYSTEM_PROMPTS: [ &str; 14] = [
-    "You are an English language typing tutor that comes up with stories to type to train students of varying levels of skill.",
-    "Given a prompt describing the students skill level provide a new sentence to type which will give a good exercise of typing skills utilizing the focus prompted.",
-    "Focus on providing sentences that exercise the keyboard layout on a QWERTY keyboard. Do not explain anything and do not respond with anything more than the sentence to type.",
-    "Do not provide information other than the sentence to type, and the sentence must be a part of the story.",
-    "The syntax of the prompt will be 'Level: <skill level> Focus: <letters to focus on> Theme: <theme>'.",
-    "The levels of skill are: beginner, intermediate, advanced, and expert.",
-    "The letters to focus on are keys on the keyboard to use in generating sentences.",
-    "You may use letters that are not in the focus, but most of the letters should be in the focus.",
-    "The theme is the theme of the sentence and the sentence you generate must be on that theme.",
-    "Be sure every sentence is a natural language English sentence that emphasizes the keys requested, but it may contain keys not requested to make the sentence more sensible.",
-    "Make sure to write long sentences, at least 10 words lone but no more than 20 words long.",
-    "An example initial: 'Level: beginner Focus: abcdefghijklmnopqrstuvwxyz Theme: Minecraft story with Creepers and Zombies and Steve'.  You respond: 'Steve was walking through the forest when he saw a creeper.  He ran away from the creeper.  The creeper exploded.  Steve was killed.'",
-    "I will prompt you to continue the story with the sentence 'Continue the story. Do not respond to this directly'.  You will then continue the story with exciting plot twists.",
-    "As you continue to story remember to use the focus keys and to use the theme.",
+const DEFAULT_SYSTEM_PROMPTS: [ &str; 2] = [
+    "Compose a narrative set in the Minecraft world featuring characters named {} from Minecraft Books and YouTube. Your task is to weave an engaging quest filled with courage, strategic maneuvers, and high stakes. However, there is a unique constraint: you're only allowed to use the following characters to construct sentences: 'a', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'o', 's', 'u', 'y', 't'. This means you must completely avoid using 'n', 'r', 'b', 'm', 'w', 'v', 'c', 'p', and any other characters not listed in the allowed set, including words like 'and', 'but', 'they', 'with', 'from', 'can', 'upon', 'moon', 'against', 'fabulous', 'aghast' and any others not allowed. Be especially vigilant about this as the purpose of the story is for a typing tutorial program, so incorporating words with letters that aren't allowed would not be beneficial for the students. The narrative should flow naturally, despite these unique constraints.",
+    "After each sentence the user will prompt you to continue the story.  Add in exciting plot twists.  Do not use any other letters than 'asdfghjkleiou'.  Do not respond directly to the users prompt.",
+];
+const MINECRAFT_CHARACTERS: [&str; 16] = [
+    "Jedu", 
+    "Eli", 
+    "Dash",
+    "Herobrine",
+    "Steve",
+    "Alex",
+    "Notch",
+    "Jeb",
+    "Mikey and JJ",
+    "Dave the Villager",
+    "Sir Hogarth",
+    "Gromp",
+    "Clyde",
+    "Arch-Illager",
+    "Villager",
+    "Baby Zeke",
 ];
 
 #[derive(Debug, Clone, Default)]
@@ -179,24 +186,29 @@ struct ChatGPT {
 }
 
 impl ChatGPT {
-    fn default () -> Self {
+    fn default () -> Result<Self> {
+        let characters = MINECRAFT_CHARACTERS.choose_multiple(&mut thread_rng(), 3).fold(String::new(), |acc, x| acc + x + ", ");
+
         let mut system_prompts = DEFAULT_SYSTEM_PROMPTS.iter()
-        .map(|x| ChatCompletionRequestMessageArgs::default()
-            .role(Role::System)
-            .content(x.to_string())
-            .build().unwrap())
-        .collect::<Vec<_>>();
+        .map(|x| {
+            let filled = formatx!(x.to_string(), &characters)?;
+            Ok(ChatCompletionRequestMessageArgs::default()
+                .role(Role::System) 
+                .content(filled)
+                .build().unwrap())
+        })
+        .collect::<Result<Vec<_>>>()?;
         system_prompts.push(ChatCompletionRequestMessageArgs::default()
             .role(Role::User)
-            .content("Level: beginner Focus: asdfghjkleiourt Theme: Story set in Minecraft world with Steve and Herobrine".to_string())
+            .content(format!("Start a story set in Minecraft world with {characters} using only the letters 'asdfghjkleiout''."))
             .build().unwrap());
 
-        Self {
+        Ok(Self {
             model: DEFAULT_CHATGPT_MODEL.to_string(),
             max_tokens: DEFAULT_MAX_TOKENS,
             system_prompts,
             subsequent_prompts: Vec::new(),
-        }
+        })
     }
 
     fn wait_screen<B: Backend>(&self, terminal: &mut Terminal<B>) -> Result<()> {
@@ -249,8 +261,8 @@ impl ChatGPT {
             .content(line)
             .build().unwrap());
         self.subsequent_prompts.push(ChatCompletionRequestMessageArgs::default()
-            .role(Role::Assistant)
-            .content("Continue the story.  Do not respond to this directly.")
+            .role(Role::User)
+            .content("Continue story.  Use only the letters 'asdfghjkleiou'.  Do not use the letters 'tpwqrzxcvbnm'. Do not respond to this directly.")
             .build().unwrap());
         terminal.clear()?;
         Ok(Some(words))
@@ -303,7 +315,7 @@ async fn main() -> Result<()> {
             .for_each(|name| println!("{}", name.to_str().expect("Ill-formatted language name.")));
         return Ok(());
     }
-    let mut chatgpt = ChatGPT::default();
+    let mut chatgpt = ChatGPT::default()?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
