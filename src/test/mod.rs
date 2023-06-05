@@ -1,12 +1,11 @@
 pub mod results;
 
-use async_openai::Client;
-use async_openai::types::{CreateImageRequestArgs, ResponseFormat, ImageSize};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Instant;
-use anyhow::{Result, anyhow, Context};
+
+use crate::StoryPart;
 
 pub struct TestEvent {
     pub time: Instant,
@@ -49,32 +48,12 @@ pub struct Test {
 }
 
 impl Test {
-    pub async fn new(words: Vec<String>) -> Result<Self> {
-        let client = Client::new();
-        let mut image_prompt_words = vec!["Render an image in Minecraft style. ".to_string()];
-        image_prompt_words.extend(words.clone());
-        let request = CreateImageRequestArgs::default()
-            .prompt(image_prompt_words.join(" "))
-            .n(1)
-            .response_format(ResponseFormat::Url)
-            .size(ImageSize::S256x256)
-            .user("async-openai")
-            .build()?;
-
-        let response = client.images().create(request).await;
-        match response {
-            Ok(response) => {
-                let image_path = response.save("./data").await?.into_iter().next().ok_or(anyhow!("No image returned"))?;
-                Ok(Self {
-                    words: words.into_iter().map(TestWord::from).collect(),
-                    current_word: 0,
-                    complete: false,
-                    image_path,
-                })        
-            }
-            Err(e) => {
-                Err(e).context(format!("Failed to create image for test: {:?}", image_prompt_words))
-            }
+    pub fn new(part: StoryPart) -> Self {
+        Self {
+            words: part.section.iter().cloned().map(TestWord::from).collect(),
+            current_word: 0,
+            complete: false,
+            image_path: part.image,
         }
     }
 

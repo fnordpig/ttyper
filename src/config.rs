@@ -4,23 +4,29 @@ use serde::{
 };
 use ratatui::style::{Color, Modifier, Style};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct Config {
     pub default_language: String,
+    pub tokens: u16,
+    pub model: String,
+    pub story: String,
     pub theme: Theme,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            default_language: "english200".into(),
+            tokens: 200,
+            model: "gpt-3.5-turbo".into(),
+            default_language: "English".into(),
+            story: "Minecraft".into(),
             theme: Theme::default(),
         }
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct Theme {
     #[serde(deserialize_with = "deserialize_style")]
