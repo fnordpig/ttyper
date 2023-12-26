@@ -2,7 +2,7 @@ mod config;
 mod test;
 mod ui;
 
-use async_openai::{Client, types::{ChatCompletionRequestMessageArgs, Role, ChatCompletionRequestMessage, CreateChatCompletionRequestArgs, CreateImageRequestArgs, ResponseFormat, ImageSize}};
+use async_openai::{Client, config::{OpenAIConfig}, types::{ChatCompletionRequestUserMessageArgs, ImageModel, ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestMessage, CreateChatCompletionRequestArgs, CreateImageRequestArgs, ResponseFormat, ImageSize}};
 use config::Config;
 use test::{results::Results, Test};
 use anyhow::{anyhow, Result, Context};
@@ -103,7 +103,7 @@ struct ChatGPTAsync {
     system_prompts: Vec<ChatCompletionRequestMessage>,
     subsequent_prompts: Vec<ChatCompletionRequestMessage>,
     sender: Option<Sender<StoryPart>>,
-    client: Client,
+    client: Client<OpenAIConfig>,
     config: Arc<Config>,
 }
 
@@ -111,19 +111,17 @@ impl ChatGPTAsync {
     fn new(sender: Sender<StoryPart>, config: Arc<Config>) -> Result<Self> {
         let characters = MINECRAFT_CHARACTERS.choose_multiple(&mut thread_rng(), 3).fold(String::new(), |acc, x| acc + x + ", ");
 
-        let mut system_prompts = DEFAULT_SYSTEM_PROMPTS.iter()
+        let mut system_prompts: Vec<ChatCompletionRequestMessage> = DEFAULT_SYSTEM_PROMPTS.iter()
         .map(|x| {
             let filled = formatx!(x.to_string(), &characters)?;
-            Ok(ChatCompletionRequestMessageArgs::default()
-                .role(Role::System) 
+            Ok(ChatCompletionRequestSystemMessageArgs::default()
                 .content(filled)
-                .build().unwrap())
+                .build()?.into())
         })
         .collect::<Result<Vec<_>>>()?;
-        system_prompts.push(ChatCompletionRequestMessageArgs::default()
-            .role(Role::User)
+        system_prompts.push(ChatCompletionRequestSystemMessageArgs::default()
             .content(format!("Start an exciting story set in Minecraft world with {characters}.  Use descriptive words and color with detailed imagery. Write it in {} language.  Use no more than 50 words for each prompt.", config.default_language))
-            .build().unwrap());
+            .build()?.into());
 
         Ok(Self {
             model: config.model.clone(),
@@ -141,9 +139,10 @@ impl ChatGPTAsync {
         image_prompt_words.extend(words.iter().cloned());
         let request = CreateImageRequestArgs::default()
             .prompt(image_prompt_words.join(" "))
+            .model(ImageModel::DallE3)
             .n(1)
             .response_format(ResponseFormat::Url)
-            .size(ImageSize::S256x256)
+            .size(ImageSize::S1024x1024)
             .user("async-openai")
             .build()?;
 
@@ -173,7 +172,7 @@ impl ChatGPTAsync {
         let mut line: String;
         loop {
             let response = client.chat().create(request.clone()).await.unwrap();
-            let content: Vec<String> = response.choices.iter().map(|x| x.message.content.clone()).collect();
+            let content: Vec<String> = response.choices.iter().map(|x| x.message.content.clone().unwrap()).collect();
             line = content.join(" ");
             section = line.split_whitespace().map(|x| x.to_string()).collect();
             match self.generate_image(&section).await {
@@ -183,14 +182,12 @@ impl ChatGPTAsync {
                 }
             }
         }
-        self.subsequent_prompts.push(ChatCompletionRequestMessageArgs::default()
-            .role(Role::Assistant)
+        self.subsequent_prompts.push(ChatCompletionRequestAssistantMessageArgs::default()
             .content(line)
-            .build().unwrap());
-        self.subsequent_prompts.push(ChatCompletionRequestMessageArgs::default()
-            .role(Role::User)
+            .build()?.into());
+        self.subsequent_prompts.push(ChatCompletionRequestUserMessageArgs::default()
             .content(format!("Continue story in {} language.  Use no more than 50 words. Use descriptive words and color with detailed imagery. Do not respond to this directly.", self.config.default_language))
-            .build().unwrap());
+            .build()?.into());
         self.sender.as_ref().unwrap().send(StoryPart {
             section,
             image,
@@ -232,7 +229,7 @@ impl ChatGPT {
                 .alignment(Alignment::Center);
             f.render_widget(paragraph, f.size());
         })?;
-        draw_image(terminal, "./wait.jpg".into(), 10, 5, (terminal.size()?.width as f64 * 0.90) as u16,(terminal.size()?.height as f64 * 0.90) as u16)?;
+        draw_image(terminal, r"./wait.jpg", 10, 5, (terminal.size()?.width as f64 * 0.90) as u16,(terminal.size()?.height as f64 * 0.90) as u16)?;
         Ok(())
     }
 
@@ -243,16 +240,15 @@ impl ChatGPT {
     }    
 }
 
-fn draw_image<B: Backend>(terminal: &mut Terminal<B>, image_path: PathBuf, x: u16, y: u16, w: u16, h: u16) -> Result<()> {
+fn draw_image<B: Backend>(terminal: &mut Terminal<B>, image_path: &str, x: u16, y: u16, w: u16, h: u16) -> Result<()> {
     let options = rascii_art::RenderOptions::default()
         .colored(true)
         .charset(rascii_art::charsets::BLOCK)
         .height(h as u32)
         .width(w as u32);
     
-    let mut image = vec![];
-    rascii_art::render_to(image_path, &mut image, options).unwrap();
-    let image_string = String::from_utf8_lossy(&image);
+    let mut image_string = String::new();
+    rascii_art::render_to(image_path, &mut image_string, &options).unwrap();
     let image_lines = image_string.lines();
     terminal.set_cursor(x, y)?;
     for (offset, line) in image_lines.enumerate() {
@@ -278,7 +274,7 @@ impl State {
                 terminal.draw(|f| {
                     f.render_widget(config.theme.apply_to(test), f.size());
                 })?;
-                draw_image(terminal, test.image_path.clone(), 10, 10, (terminal.size()?.width as f64 * 0.75) as u16,(terminal.size()?.height as f64 * 0.75) as u16)?;
+                draw_image(terminal, test.image_path.to_string_lossy().to_string().as_str(), 10, 10, (terminal.size()?.width as f64 * 0.75) as u16,(terminal.size()?.height as f64 * 0.75) as u16)?;
             }
             State::Results(results) => {
                 terminal.draw(|f| {

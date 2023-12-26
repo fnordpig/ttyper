@@ -18,7 +18,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             tokens: 200,
-            model: "gpt-3.5-turbo".into(),
+            model: "gpt-4-1106-preview".into(),
             default_language: "English".into(),
             story: "Minecraft".into(),
             theme: Theme::default(),
